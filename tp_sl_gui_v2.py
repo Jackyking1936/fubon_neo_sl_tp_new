@@ -2,6 +2,9 @@ from login_gui_v1 import LoginForm
 from sdk_logger import fubon_neo_logger
 
 import sys
+import pickle
+import json
+from pathlib import Path
 
 from fubon_neo.sdk import FubonSDK, Mode, Order
 from fubon_neo.constant import TimeInForce, OrderType, PriceType, MarketType, BSAction
@@ -25,6 +28,18 @@ class MainApp(QWidget):
         self.active_account = active_account
         self.logger = fubon_neo_logger(logger_name="sl_tp")
         self.sl_tp_logger = self.logger.get_logger()
+
+        self.sl_tp_parameter_dict = {}
+        self.default_sl_percent = -5
+        self.default_tp_percent = 5
+
+        my_file = Path("./sl_tp_parameter.pkl")
+        if my_file.is_file():
+            with open("sl_tp_parameter.pkl", "rb") as f:
+                self.sl_tp_parameter_dict = pickle.load(f)
+                self.default_sl_percent = self.sl_tp_parameter_dict["default_sl_percent"]
+                self.default_tp_percent = self.sl_tp_parameter_dict["default_tp_percent"]
+        
 
         my_icon = QIcon()
         my_icon.addFile('inventory.png')
@@ -54,14 +69,14 @@ class MainApp(QWidget):
         label_sl = QLabel('\t預設停損(%, 0為不預設停損):')
         layout_condition.addWidget(label_sl, 1, 0)
         self.lineEdit_default_sl = QLineEdit()
-        self.lineEdit_default_sl.setText('-5')
+        self.lineEdit_default_sl.setText(str(self.default_sl_percent))
         layout_condition.addWidget(self.lineEdit_default_sl, 1, 1)
         label_sl_post = QLabel('%')
         layout_condition.addWidget(label_sl_post, 1, 2)
         label_tp = QLabel('\t預設停利(%, 0為不預設停損):')
         layout_condition.addWidget(label_tp, 2, 0)
         self.lineEdit_default_tp = QLineEdit()
-        self.lineEdit_default_tp.setText('5')
+        self.lineEdit_default_tp.setText(str(self.default_tp_percent))
         layout_condition.addWidget(self.lineEdit_default_tp, 2, 1)
         label_tp_post = QLabel('%')
         layout_condition.addWidget(label_tp_post, 2, 2)
@@ -105,30 +120,29 @@ class MainApp(QWidget):
         self.print_log("login success, 現在使用帳號: {}".format(self.active_account.account))
         self.print_log("建立行情連線...")
         self.sl_tp_logger.info("sdk init realtime...")
-        self.sdk.init_realtime(Mode.Normal) # 建立行情連線
+        self.ws_mode = Mode.Normal
+        self.sdk.init_realtime(self.ws_mode) # 建立行情連線
         self.print_log("行情連線建立OK")
         self.sl_tp_logger.info("sdk init realtime done")
         self.reststock = self.sdk.marketdata.rest_client.stock
         self.wsstock = self.sdk.marketdata.websocket_client.stock
 
-    #     # slot function connect
-    #     self.button_start.clicked.connect(self.on_button_start_clicked)
-    #     self.button_stop.clicked.connect(self.on_button_stop_clicked)
+        # slot function connect
+        self.button_start.clicked.connect(self.on_button_start_clicked)
+        self.button_stop.clicked.connect(self.on_button_stop_clicked)
     #     self.tablewidget.itemClicked[QTableWidgetItem].connect(self.onItemClicked)
     #     self.button_fake_websocket.clicked.connect(self.fake_ws_data)
     #     self.button_fake_buy_filled.clicked.connect(self.fake_buy_filled)
     #     self.button_fake_sell_filled.clicked.connect(self.fake_sell_filled)
 
-    #     # communicator init and slot function connect
-    #     self.communicator = Communicate()
-    #     self.communicator.print_log_signal.connect(self.print_log)
+        # communicator init and slot function connect
+        self.communicator = Communicate()
+        self.communicator.print_log_signal.connect(self.print_log)
     #     self.communicator.item_update_signal.connect(self.item_update)
     #     self.communicator.add_new_inv_signal.connect(self.add_new_inv)
     #     self.communicator.del_row_signal.connect(self.del_table_row)
         
         # 初始化庫存表資訊
-        self.default_sl_percent = float(self.lineEdit_default_sl.text())
-        self.default_tp_percent = float(self.lineEdit_default_tp.text())
 
         self.inventories = {}
         self.unrealized_pnl = {}
@@ -138,6 +152,7 @@ class MainApp(QWidget):
 
         self.tickers_name = {}
         self.tickers_name_init()
+        self.sl_tp_logger.info("snapshoting tickers name finish")
         self.subscribed_ids = {}
         self.is_ordered = []
         
@@ -258,10 +273,10 @@ class MainApp(QWidget):
     #         new_fake_buy.account = self.active_account.account
     #         self.on_filled(None, new_fake_buy)
 
-    # # 主動回報，接入成交回報後判斷 row_idx_map 要如何更新，sl 及 tp 監控列表及庫存列表是否需pop，訂閱是否加退訂
-    # def on_filled(self, err, content):
-    #     print('filled recived:', content.stock_no, content.buy_sell)
-    #     print('content:', content)
+    # 主動回報，接入成交回報後判斷 row_idx_map 要如何更新，sl 及 tp 監控列表及庫存列表是否需pop，訂閱是否加退訂
+    def on_filled(self, err, content):
+        print('filled recived:', content.stock_no, content.buy_sell)
+        print('content:', content)
     #     if content.account == self.active_account.account:
     #         # print("filled get lock")
     #         self.mutex.lock()
@@ -482,254 +497,271 @@ class MainApp(QWidget):
     #     order_res = self.sdk.stock.place_order(self.active_account, order)
     #     return order_res
 
-    # def handle_message(self, message):
-    #     msg = json.loads(message)
-    #     event = msg["event"]
-    #     data = msg["data"]
-    #     # print(event, data)
+    def handle_message(self, message):
+        msg = json.loads(message)
+        event = msg["event"]
+        data = msg["data"]
+        print(event, data)
         
-    #     # subscribed事件處理
-    #     if event == "subscribed":
-    #         id = data["id"]
-    #         symbol = data["symbol"]
-    #         self.communicator.print_log_signal.emit('訂閱成功...'+symbol)
-    #         self.subscribed_ids[symbol] = id
+        # subscribed事件處理
+        if event == "subscribed":
+            id = data["id"]
+            symbol = data["symbol"]
+            self.communicator.print_log_signal.emit('訂閱成功...'+symbol)
+            self.subscribed_ids[symbol] = id
         
-    #     elif event == "unsubscribed":
-    #         for key, value in self.subscribed_ids.items():
-    #             if value == data["id"]:
-    #                 print(key, value)
-    #                 remove_key = key
-    #         self.subscribed_ids.pop(remove_key)
-    #         self.communicator.print_log_signal.emit(remove_key+"...成功移除訂閱")
+        elif event == "unsubscribed":
+            for key, value in self.subscribed_ids.items():
+                if value == data["id"]:
+                    print(key, value)
+                    remove_key = key
+            self.subscribed_ids.pop(remove_key)
+            self.communicator.print_log_signal.emit(remove_key+"...成功移除訂閱")
             
-    #     # data事件處理
-    #     elif event == "data":
-    #         if 'isTrial' in data:
-    #             if data['isTrial']:
-    #                 return
+        # data事件處理
+        elif event == "data":
+            if 'isTrial' in data:
+                if data['isTrial']:
+                    return
             
-    #         # print('handle_message get lock', data['symbol'])
-    #         self.mutex.lock()
+            # print('handle_message get lock', data['symbol'])
+            self.mutex.lock()
             
-    #         symbol = data["symbol"]
+            symbol = data["symbol"]
             
-    #         if symbol not in self.row_idx_map:
-    #             # print("not in unlock")
-    #             self.mutex.unlock()
-    #             return
+            if symbol not in self.row_idx_map:
+                # print("not in unlock")
+                self.mutex.unlock()
+                return
             
-    #         if 'price' in data:
-    #             cur_price = data["price"]
-    #         else:
-    #             self.mutex.unlock()
-    #             return
+            if 'price' in data:
+                cur_price = data["price"]
+            else:
+                self.mutex.unlock()
+                return
                      
-    #         self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['現價'], str(cur_price))
+            self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['現價'], str(cur_price))
         
-    #         avg_price_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存均價'])
-    #         avg_price = avg_price_item.text()
+            avg_price_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存均價'])
+            avg_price = avg_price_item.text()
         
-    #         share_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存股數'])
-    #         share = share_item.text()
+            share_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存股數'])
+            share = share_item.text()
         
-    #         cur_pnl = (cur_price-float(avg_price))*float(share)
-    #         self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['損益試算'], str(int(round(cur_pnl, 0))))
+            cur_pnl = (cur_price-float(avg_price))*float(share)
+            self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['損益試算'], str(int(round(cur_pnl, 0))))
         
-    #         return_rate = cur_pnl/(float(avg_price)*float(share))*100
-    #         self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['獲利率%'], str(round(return_rate+self.epsilon, 2))+'%')
+            return_rate = cur_pnl/(float(avg_price)*float(share))*100
+            self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['獲利率%'], str(round(return_rate+self.epsilon, 2))+'%')
             
-    #         if symbol in self.stop_loss_dict:
-    #             if cur_price <= self.stop_loss_dict[symbol] and symbol not in self.is_ordered:
-    #                 self.communicator.print_log_signal.emit(symbol+"...停損市價單發送...")
-    #                 sl_res = self.sell_market_order(symbol, share, "inv_SL")
-    #                 if sl_res.is_success:
-    #                     self.communicator.print_log_signal.emit(symbol+"...停損市價單發送成功，單號: "+sl_res.data.order_no)
-    #                     self.is_ordered.append(symbol)
-    #                 else:
-    #                     self.communicator.print_log_signal.emit(symbol+"...停損市價單發送失敗...")
-    #                     self.communicator.print_log_signal.emit(sl_res.message)
-    #             elif symbol in self.is_ordered:
-    #                 self.communicator.print_log_signal.emit(symbol+"...停損市價單已發送過...")
-    #         if symbol in self.take_profit_dict:
-    #             if cur_price >= self.take_profit_dict[symbol] and symbol not in self.is_ordered:
-    #                 self.communicator.print_log_signal.emit(symbol+"...停利市價單發送...")
-    #                 tp_res = self.sell_market_order(symbol, share, "inv_TP")
-    #                 if tp_res.is_success:
-    #                     self.communicator.print_log_signal.emit(symbol+"...停利市價單發送成功，單號: "+tp_res.data.order_no)
-    #                     self.is_ordered.append(symbol)
-    #                 else:
-    #                     self.communicator.print_log_signal.emit(symbol+"...停利市價單發送失敗...")
-    #                     self.communicator.print_log_signal.emit(tp_res.message)
-    #             elif symbol in self.is_ordered:
-    #                 self.communicator.print_log_signal.emit(symbol+"...停利市價單已發送過...")
+            if symbol in self.stop_loss_dict:
+                if cur_price <= self.stop_loss_dict[symbol] and symbol not in self.is_ordered:
+                    self.communicator.print_log_signal.emit(symbol+"...停損市價單發送...")
+                    sl_res = self.sell_market_order(symbol, share, "inv_SL")
+                    if sl_res.is_success:
+                        self.communicator.print_log_signal.emit(symbol+"...停損市價單發送成功，單號: "+sl_res.data.order_no)
+                        self.is_ordered.append(symbol)
+                    else:
+                        self.communicator.print_log_signal.emit(symbol+"...停損市價單發送失敗...")
+                        self.communicator.print_log_signal.emit(sl_res.message)
+                elif symbol in self.is_ordered:
+                    self.communicator.print_log_signal.emit(symbol+"...停損市價單已發送過...")
+            if symbol in self.take_profit_dict:
+                if cur_price >= self.take_profit_dict[symbol] and symbol not in self.is_ordered:
+                    self.communicator.print_log_signal.emit(symbol+"...停利市價單發送...")
+                    tp_res = self.sell_market_order(symbol, share, "inv_TP")
+                    if tp_res.is_success:
+                        self.communicator.print_log_signal.emit(symbol+"...停利市價單發送成功，單號: "+tp_res.data.order_no)
+                        self.is_ordered.append(symbol)
+                    else:
+                        self.communicator.print_log_signal.emit(symbol+"...停利市價單發送失敗...")
+                        self.communicator.print_log_signal.emit(tp_res.message)
+                elif symbol in self.is_ordered:
+                    self.communicator.print_log_signal.emit(symbol+"...停利市價單已發送過...")
             
-    #         # print('handle_message release lock', symbol)
-    #         self.mutex.unlock()
+            # print('handle_message release lock', symbol)
+            self.mutex.unlock()
             
-    # def handle_connect(self):
-    #     self.communicator.print_log_signal.emit('market data connected')
+    def handle_connect(self):
+        self.communicator.print_log_signal.emit('market data connected')
+        self.sl_tp_logger.info("market data connected")
     
-    # def handle_disconnect(self, code, message):
-    #     self.communicator.print_log_signal.emit(f'market data disconnect: {code}, {message}')
-    #     self.mutex.unlock()
+    def handle_disconnect(self, code, message):
+        self.communicator.print_log_signal.emit(f'market data disconnect: {code}, {message}')
+        self.sl_tp_logger.info(f"market data disconnect: {code}, {message}")
+        self.mutex.unlock()
     
-    # def handle_error(self, error):
-    #     self.communicator.print_log_signal.emit(f'market data error: {error}')
-    #     self.mutex.unlock()
+    def handle_error(self, error):
+        self.communicator.print_log_signal.emit(f'market data error: {error}')
+        self.sl_tp_logger.error(f'market data error: {error}')
+        self.mutex.unlock()
 
-    # # 視窗啟動時撈取對應帳號的inventories和unrealized_pnl初始化表格
-    # def table_init(self):
-    #     inv_res = self.sdk.accounting.inventories(self.active_account)
-    #     if inv_res.is_success:
-    #         self.print_log("庫存抓取成功")
-    #         inv_data = inv_res.data
-    #         for inv in inv_data:
-    #             if inv.today_qty != 0 and inv.order_type == OrderType.Stock:
-    #                 self.inventories[(inv.stock_no, str(inv.order_type))] = inv
-    #     else:
-    #         self.print_log("庫存抓取失敗")
+    # 視窗啟動時撈取對應帳號的inventories和unrealized_pnl初始化表格
+    def table_init(self):
+        inv_res = self.sdk.accounting.inventories(self.active_account)
+        if inv_res.is_success:
+            self.print_log("庫存抓取成功")
+            inv_data = inv_res.data
+            for inv in inv_data:
+                if inv.today_qty != 0 and inv.order_type == OrderType.Stock:
+                    self.inventories[(inv.stock_no, str(inv.order_type))] = inv
+        else:
+            self.print_log("庫存抓取失敗")
         
-    #     self.print_log("抓取未實現損益...")
-    #     upnl_res = self.sdk.accounting.unrealized_gains_and_loses(self.active_account)
-    #     if upnl_res.is_success:
-    #         self.print_log("未實現損益抓取成功")
-    #         upnl_data = upnl_res.data
-    #         for upnl in upnl_data:
-    #             self.unrealized_pnl[(upnl.stock_no, str(upnl.order_type))] = upnl
-    #     else:
-    #         self.print_log("未實現損益抓取失敗")
+        self.print_log("抓取未實現損益...")
+        upnl_res = self.sdk.accounting.unrealized_gains_and_loses(self.active_account)
+        if upnl_res.is_success:
+            self.print_log("未實現損益抓取成功")
+            upnl_data = upnl_res.data
+            for upnl in upnl_data:
+                self.unrealized_pnl[(upnl.stock_no, str(upnl.order_type))] = upnl
+        else:
+            self.print_log("未實現損益抓取失敗")
 
-    #     # 依庫存及未實現損益資訊開始填表
-    #     for key, value in self.inventories.items():
-    #         stock_symbol = key[0]
-    #         stock_name = self.tickers_name[key[0]]
-    #         print(stock_symbol)
-    #         row = self.tablewidget.rowCount()
-    #         self.tablewidget.insertRow(row)
-    #         self.row_idx_map[stock_symbol] = row
-    #         for j in range(len(self.table_header)):
-    #             item = QTableWidgetItem()
-    #             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-    #             if self.table_header[j] == '股票名稱':
-    #                 item.setText(stock_name)
-    #                 self.tablewidget.setItem(row, j, item)
-    #             elif self.table_header[j] == '股票代號':
-    #                 item.setText(stock_symbol)
-    #                 self.tablewidget.setItem(row, j, item)
-    #             elif self.table_header[j] == '類別':
-    #                 item.setText(str(value.order_type).split('.')[-1])
-    #                 self.tablewidget.setItem(row, j, item)
-    #             elif self.table_header[j] == '庫存股數':
-    #                 item.setText(str(value.today_qty))
-    #                 self.tablewidget.setItem(row, j, item)
-    #             elif self.table_header[j] == '現價':
-    #                 item.setText('-')
-    #                 self.tablewidget.setItem(row, j, item)
-    #             elif self.table_header[j] == '停損':
-    #                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEditable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
-    #                 item.setCheckState(Qt.Unchecked)
-    #                 self.tablewidget.setItem(row, j, item)
-    #             elif self.table_header[j] == '停利':
-    #                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEditable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
-    #                 item.setCheckState(Qt.Unchecked)
-    #                 self.tablewidget.setItem(row, j, item)
-    #             elif self.table_header[j] == '庫存均價':
-    #                 item.setText(str(round(self.unrealized_pnl[key].cost_price+self.epsilon, 2)))
-    #                 self.tablewidget.setItem(row, j, item)
-    #             elif self.table_header[j] == '損益試算':
-    #                 cur_upnl = 0
-    #                 if self.unrealized_pnl[key].unrealized_profit > self.unrealized_pnl[key].unrealized_loss:
-    #                     cur_upnl = self.unrealized_pnl[key].unrealized_profit
-    #                 else:
-    #                     cur_upnl = -(self.unrealized_pnl[key].unrealized_loss)
-    #                 item.setText(str(cur_upnl))
-    #                 self.tablewidget.setItem(row, j, item)
-    #             elif self.table_header[j] == '獲利率%':
-    #                 cur_upnl = 0
-    #                 if self.unrealized_pnl[key].unrealized_profit > self.unrealized_pnl[key].unrealized_loss:
-    #                     cur_upnl = self.unrealized_pnl[key].unrealized_profit
-    #                 else:
-    #                     cur_upnl = -(self.unrealized_pnl[key].unrealized_loss)
-    #                 stock_cost = value.today_qty*self.unrealized_pnl[key].cost_price
-    #                 return_rate = cur_upnl/stock_cost*100
-    #                 item.setText(str(round(return_rate+self.epsilon, 2))+'%')
-    #                 self.tablewidget.setItem(row, j, item)
-    #         self.wsstock.subscribe({
-    #             'channel': 'trades',
-    #             'symbol': stock_symbol
-    #         })
+        # 依庫存及未實現損益資訊開始填表
+        for key, value in self.inventories.items():
+            stock_symbol = key[0]
+            stock_name = self.tickers_name[key[0]]
+            print(stock_symbol)
+            row = self.tablewidget.rowCount()
+            self.tablewidget.insertRow(row)
+            self.row_idx_map[stock_symbol] = row
+            for j in range(len(self.table_header)):
+                item = QTableWidgetItem()
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                if self.table_header[j] == '股票名稱':
+                    item.setText(stock_name)
+                    self.tablewidget.setItem(row, j, item)
+                elif self.table_header[j] == '股票代號':
+                    item.setText(stock_symbol)
+                    self.tablewidget.setItem(row, j, item)
+                elif self.table_header[j] == '類別':
+                    item.setText(str(value.order_type).split('.')[-1])
+                    self.tablewidget.setItem(row, j, item)
+                elif self.table_header[j] == '庫存股數':
+                    item.setText(str(value.today_qty))
+                    self.tablewidget.setItem(row, j, item)
+                elif self.table_header[j] == '現價':
+                    item.setText('-')
+                    self.tablewidget.setItem(row, j, item)
+                elif self.table_header[j] == '停損':
+                    item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEditable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                    item.setCheckState(Qt.Unchecked)
+                    self.tablewidget.setItem(row, j, item)
+                elif self.table_header[j] == '停利':
+                    item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEditable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                    item.setCheckState(Qt.Unchecked)
+                    self.tablewidget.setItem(row, j, item)
+                elif self.table_header[j] == '庫存均價':
+                    item.setText(str(round(self.unrealized_pnl[key].cost_price+self.epsilon, 2)))
+                    self.tablewidget.setItem(row, j, item)
+                elif self.table_header[j] == '損益試算':
+                    cur_upnl = 0
+                    if self.unrealized_pnl[key].unrealized_profit > self.unrealized_pnl[key].unrealized_loss:
+                        cur_upnl = self.unrealized_pnl[key].unrealized_profit
+                    else:
+                        cur_upnl = -(self.unrealized_pnl[key].unrealized_loss)
+                    item.setText(str(cur_upnl))
+                    self.tablewidget.setItem(row, j, item)
+                elif self.table_header[j] == '獲利率%':
+                    cur_upnl = 0
+                    if self.unrealized_pnl[key].unrealized_profit > self.unrealized_pnl[key].unrealized_loss:
+                        cur_upnl = self.unrealized_pnl[key].unrealized_profit
+                    else:
+                        cur_upnl = -(self.unrealized_pnl[key].unrealized_loss)
+                    stock_cost = value.today_qty*self.unrealized_pnl[key].cost_price
+                    return_rate = cur_upnl/stock_cost*100
+                    item.setText(str(round(return_rate+self.epsilon, 2))+'%')
+                    self.tablewidget.setItem(row, j, item)
+            self.wsstock.subscribe({
+                'channel': 'trades',
+                'symbol': stock_symbol
+            })
 
-    #     self.print_log('庫存資訊初始化完成')
+        self.print_log('庫存資訊初始化完成')
+        self.sl_tp_logger.info('inventories fetched and initialized done')
 
-    #     # 調整股票名稱欄位寬度
-    #     header = self.tablewidget.horizontalHeader()      
-    #     header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-    #     print(self.row_idx_map)
-    #     print(self.col_idx_map)
+        # 調整股票名稱欄位寬度
+        header = self.tablewidget.horizontalHeader()      
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        print(self.row_idx_map)
+        print(self.col_idx_map)
 
-    # def on_button_start_clicked(self):
-    #     try:
-    #         self.default_sl_percent = float(self.lineEdit_default_sl.text())*0.01
-    #         if self.default_sl_percent > 0:
-    #             self.print_log("請輸入正確的監控停損(%), 範圍需小於0, 0為不預設")
-    #             return
-    #         elif self.default_sl_percent == 0:
-    #             self.print_log("預設停損輸入為0, 不預設停損")
-    #         else:
-    #             self.print_log("預設停損"+str(self.default_sl_percent)+"%, 設定成功")
-    #     except Exception as e:
-    #         self.print_log("請輸入正確的監控停損(%), 範圍需小於0, 0為不預設 "+str(e))
-    #         return
+    def on_button_start_clicked(self):
+        self.sl_tp_logger.info("button start click")
+        try:
+            self.default_sl_percent = float(self.lineEdit_default_sl.text())*0.01
+            if self.default_sl_percent > 0:
+                self.print_log("請輸入正確的監控停損(%), 範圍需小於0, 0為不預設")
+                self.sl_tp_logger.error(f"default sl wrong input {self.default_sl_percent}")
+                return
+            elif self.default_sl_percent == 0:
+                self.print_log("預設停損輸入為0, 不預設停損")
+            else:
+                self.print_log("預設停損"+str(self.default_sl_percent*100)+"%, 設定成功")
+        except Exception as e:
+            self.print_log("請輸入正確的監控停損(%), 範圍需小於0, 0為不預設 "+str(e))
+            self.sl_tp_logger.error(f"something went wrong when setting default sl {e}")
+            return
         
-    #     try:
-    #         self.default_tp_percent = float(self.lineEdit_default_tp.text())*0.01
-    #         if self.default_tp_percent < 0:
-    #             self.print_log("請輸入正確的監控停利(%), 範圍需大於0, 0為不預設")
-    #             return
-    #         elif self.default_tp_percent == 0:
-    #             self.print_log("預設停利輸入為0, 不預設停利")
-    #         else:
-    #             self.print_log("預設停利"+str(self.default_tp_percent)+"%, 設定成功")
-    #     except Exception as e:
-    #         self.print_log("請輸入正確的監控停利(%), 範圍需大於0, 0為不預設 "+str(e))
-    #         return
+        try:
+            self.default_tp_percent = float(self.lineEdit_default_tp.text())*0.01
+            if self.default_tp_percent < 0:
+                self.print_log("請輸入正確的監控停利(%), 範圍需大於0, 0為不預設")
+                self.sl_tp_logger.error(f"default tp wrong input {self.default_tp_percent}")
+                return
+            elif self.default_tp_percent == 0:
+                self.print_log("預設停利輸入為0, 不預設停利")
+            else:
+                self.print_log("預設停利"+str(self.default_tp_percent*100)+"%, 設定成功")
+        except Exception as e:
+            self.print_log("請輸入正確的監控停利(%), 範圍需大於0, 0為不預設 "+str(e))
+            self.sl_tp_logger.info(f"something went wrong when setting default tp {e}")
+            return
         
-    #     self.print_log("開始執行監控")
-    #     self.lineEdit_default_sl.setReadOnly(True)
-    #     self.lineEdit_default_tp.setReadOnly(True)
-    #     self.button_start.setVisible(False)
-    #     self.button_stop.setVisible(True)
-    #     self.tablewidget.clearContents()
-    #     self.tablewidget.setRowCount(0)
+        self.sl_tp_logger.info(f"using default_sl {self.default_sl_percent} and default_tp {self.default_tp_percent}")
+        self.sl_tp_logger.info("start monitoring")
+        self.print_log("開始執行監控")
+        self.lineEdit_default_sl.setReadOnly(True)
+        self.lineEdit_default_tp.setReadOnly(True)
+        self.button_start.setVisible(False)
+        self.button_stop.setVisible(True)
+        self.tablewidget.clearContents()
+        self.tablewidget.setRowCount(0)
 
-    #     self.print_log("建立WebSocket行情連線")
-    #     self.sdk.init_realtime()
-    #     self.wsstock = self.sdk.marketdata.websocket_client.stock
-    #     self.wsstock.on("connect", self.handle_connect)
-    #     self.wsstock.on("disconnect", self.handle_disconnect)
-    #     self.wsstock.on("error", self.handle_error)
-    #     self.wsstock.on('message', self.handle_message)
-    #     self.wsstock.connect()
+        self.sl_tp_logger.info(f"establishing quote websocket")
+        self.print_log("建立WebSocket行情連線")
+        self.sdk.init_realtime(self.ws_mode)
+        self.wsstock = self.sdk.marketdata.websocket_client.stock
+        self.wsstock.on("connect", self.handle_connect)
+        self.wsstock.on("disconnect", self.handle_disconnect)
+        self.wsstock.on("error", self.handle_error)
+        self.wsstock.on('message', self.handle_message)
+        self.wsstock.connect()
+        
+        self.sl_tp_logger.info(f"fetching inventories")
+        self.print_log("抓取庫存...")
+        self.table_init()
+        self.sdk.set_on_filled(self.on_filled)
 
-    #     self.print_log("抓取庫存...")
-    #     self.table_init()
-    #     self.sdk.set_on_filled(self.on_filled)
+        self.save_sl_tp_parameter()
 
-    # def on_button_stop_clicked(self):
-    #     self.print_log("停止執行監控")
-    #     self.lineEdit_default_sl.setReadOnly(False)
-    #     self.lineEdit_default_tp.setReadOnly(False)
-    #     self.button_stop.setVisible(False)
-    #     self.button_start.setVisible(True)
+    def on_button_stop_clicked(self):
+        self.print_log("停止執行監控")
+        self.lineEdit_default_sl.setReadOnly(False)
+        self.lineEdit_default_tp.setReadOnly(False)
+        self.button_stop.setVisible(False)
+        self.button_start.setVisible(True)
 
-    #     self.wsstock.disconnect()
-    #     try:
-    #         if self.fake_ws_timer.is_alive():
-    #             self.fake_ws_timer.cancel()
-    #             self.fake_price_cnt+=1
-    #     except AttributeError:
-    #         print("no fake ws timer exist")
+        self.wsstock.disconnect()
+        try:
+            if self.fake_ws_timer.is_alive():
+                self.fake_ws_timer.cancel()
+                self.fake_price_cnt+=1
+        except AttributeError:
+            print("no fake ws timer exist")
+
+        self.save_sl_tp_parameter()
 
     def tickers_name_init(self):
         self.tickers_res = self.reststock.snapshot.quotes(market='TSE')
@@ -745,6 +777,12 @@ class MainApp(QWidget):
                 self.tickers_name.update({item['symbol']: item['name']})
             else:
                 self.tickers_name.update({item['symbol']: ''})
+    
+    def save_sl_tp_parameter(self):
+        with open('sl_tp_parameter.pkl', 'wb') as f:
+            self.sl_tp_parameter_dict['default_sl_percent'] = self.default_sl_percent*100
+            self.sl_tp_parameter_dict['default_tp_percent'] = self.default_tp_percent*100
+            pickle.dump(self.sl_tp_parameter_dict, f)
 
     # 更新最新log到QPlainTextEdit的slot function
     def print_log(self, log_info):
@@ -757,6 +795,7 @@ class MainApp(QWidget):
         self.print_log("disconnect websocket...")
         self.wsstock.disconnect()
         self.sdk.logout()
+        self.save_sl_tp_parameter()
 
         try:
             if self.fake_ws_timer.is_alive():
