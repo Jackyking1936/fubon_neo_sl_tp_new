@@ -417,7 +417,7 @@ class MainApp(QWidget):
                         pass
                     print("deleting done")
             
-                    self.inventories.pop((symbol, str(filled_data['order_type']))
+                    self.inventories.pop(symbol, str(filled_data['order_type']))
                 
                     try:
                         self.is_ordered.remove(symbol)
