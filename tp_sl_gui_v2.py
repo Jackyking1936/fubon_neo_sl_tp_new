@@ -42,7 +42,6 @@ class Communicate(QObject):
     print_log_signal = Signal(str)
     item_update_signal = Signal(dict)
     filled_data_signal = Signal(dict)
-    del_row_signal = Signal(int)
 
 class MainApp(QWidget):
     def __init__(self, sdk, active_account):
@@ -54,15 +53,15 @@ class MainApp(QWidget):
         self.sl_tp_logger = self.logger.get_logger()
 
         self.sl_tp_parameter_dict = {}
-        self.default_sl_percent = -5.0
-        self.default_tp_percent = 5.0
+        self.default_sl_percent = -0.05
+        self.default_tp_percent = 0.05
 
         my_file = Path("./sl_tp_parameter.pkl")
         if my_file.is_file():
             with open("sl_tp_parameter.pkl", "rb") as f:
                 self.sl_tp_parameter_dict = pickle.load(f)
-                self.default_sl_percent = self.sl_tp_parameter_dict["default_sl_percent"]
-                self.default_tp_percent = self.sl_tp_parameter_dict["default_tp_percent"]
+                self.default_sl_percent = self.sl_tp_parameter_dict["default_sl_percent"]/100.0
+                self.default_tp_percent = self.sl_tp_parameter_dict["default_tp_percent"]/100.0
         
 
         my_icon = QIcon()
@@ -93,14 +92,14 @@ class MainApp(QWidget):
         label_sl = QLabel('\t預設停損(%, 0為不預設停損):')
         layout_condition.addWidget(label_sl, 1, 0)
         self.lineEdit_default_sl = QLineEdit()
-        self.lineEdit_default_sl.setText(str(self.default_sl_percent))
+        self.lineEdit_default_sl.setText(str(self.default_sl_percent*100))
         layout_condition.addWidget(self.lineEdit_default_sl, 1, 1)
         label_sl_post = QLabel('%')
         layout_condition.addWidget(label_sl_post, 1, 2)
-        label_tp = QLabel('\t預設停利(%, 0為不預設停損):')
+        label_tp = QLabel('\t預設停利(%, 0為不預設停利):')
         layout_condition.addWidget(label_tp, 2, 0)
         self.lineEdit_default_tp = QLineEdit()
-        self.lineEdit_default_tp.setText(str(self.default_tp_percent))
+        self.lineEdit_default_tp.setText(str(self.default_tp_percent*100))
         layout_condition.addWidget(self.lineEdit_default_tp, 2, 1)
         label_tp_post = QLabel('%')
         layout_condition.addWidget(label_tp_post, 2, 2)
@@ -137,7 +136,7 @@ class MainApp(QWidget):
 
         layout.addWidget(self.tablewidget, stretch=8)
         layout.addLayout(layout_condition, stretch=1)
-        layout.addLayout(layout_sim, stretch=1)
+        # layout.addLayout(layout_sim, stretch=1)
         layout.addWidget(self.log_text, stretch=3)
         self.setLayout(layout)
 
@@ -157,17 +156,15 @@ class MainApp(QWidget):
         self.tablewidget.itemClicked[QTableWidgetItem].connect(self.onItemClicked)
         self.button_fake_websocket.clicked.connect(self.fake_ws_data)
         self.button_fake_buy_filled.clicked.connect(self.fake_buy_filled)
-    #     self.button_fake_sell_filled.clicked.connect(self.fake_sell_filled)
+        self.button_fake_sell_filled.clicked.connect(self.fake_sell_filled)
 
         # communicator init and slot function connect
         self.communicator = Communicate()
         self.communicator.print_log_signal.connect(self.print_log)
         self.communicator.item_update_signal.connect(self.item_update)
         self.communicator.filled_data_signal.connect(self.handle_filled_data)
-    #     self.communicator.del_row_signal.connect(self.del_table_row)
         
         # 初始化庫存表資訊
-
         self.inventories = {}
         self.unrealized_pnl = {}
         self.row_idx_map = {}
@@ -187,17 +184,19 @@ class MainApp(QWidget):
         self.fake_price_cnt = 0
         self.fake_buy_clicked = 0
     
-    # # 當有庫存歸零時刪除該列的slot function
-    # def del_table_row(self, row_idx):
-    #     self.tablewidget.removeRow(row_idx)
+    # 當有庫存歸零時刪除該列的slot function
+    def del_table_row(self, row_idx):
+        symbol = self.tablewidget.item(row_idx, self.col_idx_map['股票代號']).text
+        self.sl_tp_logger.info(f"Deleting {symbol} from table...")
+        self.tablewidget.removeRow(row_idx)
         
-    #     for key, value in self.row_idx_map.items():
-    #         if value > row_idx:
-    #             self.row_idx_map[key] = value-1
-    #         elif value == row_idx:
-    #             pop_idx = key
-    #     self.row_idx_map.pop(pop_idx)
-    #     print("pop inventory finish")
+        for key, value in self.row_idx_map.items():
+            if value > row_idx:
+                self.row_idx_map[key] = value-1
+            elif value == row_idx:
+                pop_idx = key
+        pop_item = self.row_idx_map.pop(pop_idx)
+        self.sl_tp_logger.info(f"Pop {pop_item} from inventory...done")
 
     # 當有成交有不在現有庫存的現股股票時新增至現有表格最下方
     def add_new_inv(self, symbol, qty, price):
@@ -270,18 +269,17 @@ class MainApp(QWidget):
             'symbol': symbol
         })
 
-    # # 測試用假裝有賣出成交的按鈕slot function
-    # def fake_sell_filled(self):
-    #     new_fake_sell = fake_filled_data()
-    #     stock_list = ['2330', '2881', '2454', '00940', '1101', '6598', '2509', '3230', '4903', '6661']
-    #     for stock_no in stock_list:
-    #         new_fake_sell.stock_no = stock_no
-    #         new_fake_sell.buy_sell = BSAction.Sell
-    #         new_fake_sell.filled_qty = 1000
-    #         new_fake_sell.filled_price = 14
-    #         new_fake_sell.account = self.active_account.account
-    #         new_fake_sell.user_def = "inv_SL"
-    #         self.on_filled(None, new_fake_sell)
+    # 測試用假裝有賣出成交的按鈕slot function
+    def fake_sell_filled(self):
+        new_fake_sell = fake_filled_data()
+        stock_no = list(self.row_idx_map.keys())[0]
+        new_fake_sell.stock_no = stock_no
+        new_fake_sell.buy_sell = BSAction.Sell
+        new_fake_sell.filled_qty = 1000
+        new_fake_sell.filled_price = 14
+        new_fake_sell.account = self.active_account.account
+        new_fake_sell.user_def = "inv_SL"
+        self.on_filled(None, new_fake_sell)
 
     # 測試用假裝有買入成交的按鈕slot function
     def fake_buy_filled(self):
@@ -374,26 +372,27 @@ class MainApp(QWidget):
                     remain_qty_str = str(int(round(remain_qty, 0)))
                     if filled_data['user_def'] == "inv_SL":
                         self.print_log("停損出場 "+symbol+": "+str(filled_qty)+"股, 成交價:"+str(filled_price)+", 剩餘: "+remain_qty_str+"股")
-                        self.sl_tp_logger.info(f"停損出場 {symbol}: {filled_qty}股, 成交價: {filled_price}, 剩餘: {remain_qty_str} 股")
+                        self.sl_tp_logger.info(f"停損出場 {symbol}: {filled_qty} 股, 成交價: {filled_price}, 剩餘: {remain_qty_str} 股")
                     elif filled_data['user_def'] == "inv_TP":
                         self.print_log("停利出場 "+symbol+": "+str(filled_qty)+"股, 成交價:"+str(filled_price)+", 剩餘: "+remain_qty_str+"股")
+                        self.sl_tp_logger.info(f"停利出場 {symbol}: {filled_qty} 股, 成交價: {filled_price}, 剩餘: {remain_qty_str} 股")
                 
-                    self.communicator.item_update_signal.emit(inv_qty_item.row(), self.col_idx_map['庫存股數'], remain_qty_str)
-                    avg_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存均價'])
-                    avg_price = float(avg_item.text())
+                    self.tablewidget.item(inv_qty_item.row(), self.col_idx_map['庫存股數']).setText(remain_qty_str)
+                    avg_price_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存均價'])
+                    avg_price = float(avg_price_item.text())
                     new_pnl = (filled_price-avg_price)*remain_qty
                     new_cost = avg_price*remain_qty
                     new_rate_return = new_pnl/new_cost*100
 
                     # update row
-                    self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['庫存股數'], str(remain_qty))
-                    self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['現價'], str(round(filled_price+self.epsilon, 2)))
-                    self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['損益試算'], str(round(new_pnl+self.epsilon, 2)))
-                    self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['獲利率%'], str(round(new_rate_return+self.epsilon, 2))+"%")
+                    self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存股數']).setText(str(remain_qty))
+                    self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['現價']).setText(str(round(filled_price+self.epsilon, 2)))
+                    self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['損益試算']).setText(str(round(new_pnl+self.epsilon, 2)))
+                    self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['獲利率%']).setText(str(round(new_rate_return+self.epsilon, 2))+"%")
 
                 elif remain_qty == 0:
                     # del table row and unsubscribe
-                    self.communicator.del_row_signal.emit(self.row_idx_map[symbol])
+                    self.del_table_row(self.row_idx_map[symbol])
 
                     if symbol in self.stop_loss_dict:
                         self.stop_loss_dict.pop(symbol)
@@ -405,11 +404,14 @@ class MainApp(QWidget):
                         })
                 
                     if filled_data['user_def'] == "inv_SL":
-                        self.communicator.print_log_signal.emit("停損出場 "+symbol+": "+str(filled_qty)+"股, 成交價:"+str(filled_price))
+                        self.print_log("停損出場 "+symbol+": "+str(filled_qty)+"股, 成交價:"+str(filled_price))
+                        self.sl_tp_logger.info(f"停損出場 {symbol}: {filled_qty} 股, 成交價: {filled_price}")
                     elif filled_data['user_def'] == "inv_TP":
-                        self.communicator.print_log_signal.emit("停利出場 "+symbol+": "+str(filled_qty)+"股, 成交價:"+str(filled_price))
+                        self.print_log("停利出場 "+symbol+": "+str(filled_qty)+"股, 成交價:"+str(filled_price))
+                        self.sl_tp_logger.info(f"停利出場 {symbol}: {filled_qty} 股, 成交價: {filled_price}")
                     else:
-                        self.communicator.print_log_signal.emit("手動出場 "+symbol+": "+str(filled_qty)+"股, 成交價:"+str(filled_price))
+                        self.print_log("手動出場 "+symbol+": "+str(filled_qty)+"股, 成交價:"+str(filled_price))
+                        self.sl_tp_logger.info(f"手動出場 {symbol}: {filled_qty} 股, 成交價: {filled_price}")
 
                     print("deleting...")
                     while symbol in self.row_idx_map:
@@ -421,8 +423,9 @@ class MainApp(QWidget):
                 
                     try:
                         self.is_ordered.remove(symbol)
+                        self.sl_tp_logger.info(f"Removed {symbol} from is_ordered map")
                     except ValueError as v_err:
-                        print("not in is_ordered", v_err)
+                        self.sl_tp_logger.error(f"{symbol} not in is_ordered, error {v_err}")
 
     # 測試用假裝有websocket data的按鈕slot function
     def fake_ws_data(self):
@@ -561,7 +564,7 @@ class MainApp(QWidget):
         msg = json.loads(message)
         event = msg["event"]
         data = msg["data"]
-        print(event, data)
+        # print(event, data)
         
         # subscribed事件處理
         if event == "subscribed":
@@ -619,11 +622,14 @@ class MainApp(QWidget):
                     if sl_res.is_success:
                         self.communicator.print_log_signal.emit(symbol+"...停損市價單發送成功，單號: "+sl_res.data.order_no)
                         self.is_ordered.append(symbol)
+                        self.sl_tp_logger.info(f"{symbol} {share}股, 停損市價單發送成功, 單號: {sl_res.data.order_no}")
                     else:
                         self.communicator.print_log_signal.emit(symbol+"...停損市價單發送失敗...")
                         self.communicator.print_log_signal.emit(sl_res.message)
+                        self.sl_tp_logger.error(f"{symbol} 停損市價單發送失敗, fail message: {sl_res.message}")
                 elif symbol in self.is_ordered:
                     self.communicator.print_log_signal.emit(symbol+"...停損市價單已發送過...")
+                    self.sl_tp_logger.info(f"{symbol} {share}股, 停損市價單已發送過")
 
             if symbol in self.take_profit_dict:
                 if cur_price >= self.take_profit_dict[symbol] and symbol not in self.is_ordered:
@@ -634,11 +640,14 @@ class MainApp(QWidget):
                     if tp_res.is_success:
                         self.communicator.print_log_signal.emit(symbol+"...停利市價單發送成功，單號: "+tp_res.data.order_no)
                         self.is_ordered.append(symbol)
+                        self.sl_tp_logger.info(f"{symbol} {share}股, 停利市價單發送成功, 單號: {sl_res.data.order_no}")
                     else:
                         self.communicator.print_log_signal.emit(symbol+"...停利市價單發送失敗...")
                         self.communicator.print_log_signal.emit(tp_res.message)
+                        self.sl_tp_logger.error(f"{symbol} 停利市價單發送失敗, fail message: {sl_res.message}")
                 elif symbol in self.is_ordered:
                     self.communicator.print_log_signal.emit(symbol+"...停利市價單已發送過...")
+                    self.sl_tp_logger.info(f"{symbol} {share}股, 停利市價單已發送過")
             
     def handle_connect(self):
         self.communicator.print_log_signal.emit('market data connected')
